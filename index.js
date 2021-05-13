@@ -1,7 +1,7 @@
 const puppeteer = require("puppeteer-extra");
 const pluginStealth = require("puppeteer-extra-plugin-stealth");
 const { installMouseHelper } = require("./extras/mouse-helper");
-const fs = require("fs");
+const fs = require("fs").promises;
 const SimpleNodeLogger = require("simple-node-logger");
 const parseBoolean = require("parse-string-boolean");
 const { parseISO, compareAsc } = require("date-fns");
@@ -12,23 +12,20 @@ if (process.env.NODE_ENV !== "production") {
   require("dotenv").config();
 }
 
+// Setup Puppeteer
 puppeteer.use(pluginStealth());
 
-// Logging
-// let html = "";
-// const html_path = "htmls/bot_";
-// const screenshot_path = "screenshots/bot_";
-const loggingOptions = {
-  logFilePath: "logs/" + "bot.log",
-  timestampFormat: "YYYY-MM-DD HH:mm:ss.SSS",
-};
-const log = SimpleNodeLogger.createSimpleLogger(loggingOptions);
-log.setLevel(process.env.LOG_LEVEL);
-
-// Timing
+// Constants
 let PURCHASE_MADE = false;
 let FATAL_ERROR_COUNT = 0;
 let ACTIVELY_RUNNING = false;
+
+// Logging
+let log;
+const loggingOptions = {
+  // logFilePath: "bot.log",
+  timestampFormat: "YYYY-MM-DD HH:mm:ss.SSS",
+};
 
 // Email
 const emailOptions = {
@@ -70,19 +67,6 @@ async function mainFlow() {
 
     if (parseBoolean(process.env.DEBUG, false) == true) {
       await installMouseHelper(page); // Makes mouse visible
-
-      var dir = "./htmls";
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir);
-      }
-      dir = "./screenshots";
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir);
-      }
-      dir = "./logs";
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir);
-      }
     }
 
     const url =
@@ -362,9 +346,21 @@ async function mainFlow() {
   }
 }
 
+async function initLogging() {
+  try {
+    log = SimpleNodeLogger.createSimpleLogger(loggingOptions);
+    log.setLevel(process.env.LOG_LEVEL);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 // Main flow
 (async () => {
+  await initLogging();
+
   log.info("starting mainFlow");
+
   const intervalTime = parseBoolean(process.env.DEBUG, false)
     ? parseInt(process.env.DEBUG_INTERVAL_TIME, 10)
     : parseInt(process.env.INTERVAL_TIME, 10);
