@@ -1,42 +1,74 @@
-const ck = require("ckey");
 const puppeteer = require("puppeteer-extra");
 const pluginStealth = require("puppeteer-extra-plugin-stealth");
 const { installMouseHelper } = require("./extras/mouse-helper");
 const fs = require("fs");
 const SimpleNodeLogger = require("simple-node-logger");
 const parseBoolean = require("parse-string-boolean");
+const { parseISO, compareAsc } = require("date-fns");
+const nodemailer = require("nodemailer");
+const sgTransport = require("nodemailer-sendgrid-transport");
+
+if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config();
+}
 
 puppeteer.use(pluginStealth());
 
 // Logging
-let html = "";
-const html_path = "htmls/bot_";
-const screenshot_path = "screenshots/bot_";
-const opts = {
+// let html = "";
+// const html_path = "htmls/bot_";
+// const screenshot_path = "screenshots/bot_";
+const loggingOptions = {
   logFilePath: "logs/" + "bot.log",
   timestampFormat: "YYYY-MM-DD HH:mm:ss.SSS",
 };
-const log = SimpleNodeLogger.createSimpleLogger(opts);
-log.setLevel(ck.LOG_LEVEL);
+const log = SimpleNodeLogger.createSimpleLogger(loggingOptions);
+log.setLevel(process.env.LOG_LEVEL);
 
-// Includes writing updates to log file, writing html snapshots, and taking screenshots
-const debug = parseBoolean(ck.DEBUG, false);
+// Timing
+let PURCHASE_MADE = false;
+let FATAL_ERROR_COUNT = 0;
+let ACTIVELY_RUNNING = false;
 
-// Urls
-const url =
-  parseBoolean(ck.USE_TEST_URL, false) === true ? ck.TEST_URL : ck.URL;
+// Email
+const emailOptions = {
+  auth: {
+    api_key: process.env.SENDGRID_API_KEY,
+  },
+};
+const client = nodemailer.createTransport(sgTransport(emailOptions));
 
-// Main flow
-(async () => {
+// Send email
+const sendEmail = (subject, text) => {
+  if (!parseBoolean(process.env.EMAIL_ENABLED, false)) return;
+
+  const email = {
+    subject,
+    text,
+    to: process.env.EMAIL_TO,
+    from: process.env.EMAIL_FROM,
+  };
+  client.sendMail(email, function (err, info) {
+    if (err) {
+      log.error(err);
+    } else {
+      log.info("Email sent: " + JSON.stringify(info));
+    }
+  });
+};
+
+async function mainFlow() {
+  ACTIVELY_RUNNING = true;
   const browser = await puppeteer.launch({
     headless: false,
+    args: ["--no-sandbox"],
   });
   let count = 0;
 
   try {
     const page = await browser.newPage();
 
-    if (debug == true) {
+    if (parseBoolean(process.env.DEBUG, false) == true) {
       await installMouseHelper(page); // Makes mouse visible
 
       var dir = "./htmls";
@@ -52,6 +84,11 @@ const url =
         fs.mkdirSync(dir);
       }
     }
+
+    const url =
+      parseBoolean(process.env.USE_TEST_URL, false) === true
+        ? process.env.TEST_URL
+        : process.env.URL;
 
     await page.goto(url);
 
@@ -81,7 +118,7 @@ const url =
         "#js-addToCart-Container > .productDescription__buttonsWrapper > #js-productDetailBuyButton > .button > .productDescription__addToCartText"
       ),
       // login
-      await page.goto(ck.LOGIN_URL),
+      await page.goto(process.env.LOGIN_URL),
     ]);
 
     log.debug(`step ${count++}: #js-addToCart-Container`);
@@ -89,7 +126,7 @@ const url =
     // Enter username
     await page.waitForSelector(".accountForm > #login-form #loginEmail");
     await page.click(".accountForm > #login-form #loginEmail");
-    await page.type("#loginEmail", ck.USERNAME);
+    await page.type("#loginEmail", process.env.CANYON_USERNAME);
 
     log.debug(`step ${count++}: loginEmail`);
 
@@ -98,7 +135,7 @@ const url =
     // Enter password
     await page.waitForSelector(".accountForm > #login-form #loginPassword");
     await page.click(".accountForm > #login-form #loginPassword");
-    await page.type("#loginPassword", ck.PASSWORD);
+    await page.type("#loginPassword", process.env.CANYON_PASSWORD);
 
     log.debug(`step ${count++}: loginPassword`);
 
@@ -121,7 +158,7 @@ const url =
     log.debug(`step ${count++}: networkidle0`);
 
     // Go to checkout
-    await page.goto(ck.CHECKOUT_URL);
+    await page.goto(process.env.CHECKOUT_URL);
 
     log.debug(`step ${count++}: CHECKOUT_URL`);
 
@@ -202,7 +239,7 @@ const url =
     );
     await page.type(
       "input[name=dwfrm_billing_creditCardFields_cardOwner]",
-      ck.CC_NAME
+      process.env.CC_NAME
     );
 
     await page.waitForTimeout(500);
@@ -214,7 +251,7 @@ const url =
     );
     await page.type(
       "input[name=dwfrm_billing_creditCardFields_cardNumber]",
-      ck.CC_NUM
+      process.env.CC_NUM
     );
 
     await page.waitForTimeout(500);
@@ -226,7 +263,7 @@ const url =
     );
     await page.type(
       "input[name=dwfrm_billing_creditCardFields_securityCode]",
-      ck.CC_CVC
+      process.env.CC_CVC
     );
 
     await page.waitForTimeout(500);
@@ -243,7 +280,7 @@ const url =
       );
 
       selectedOption.selected = true;
-    }, ck.CC_EXP_MO);
+    }, process.env.CC_EXP_MO);
 
     log.debug(
       `step ${count++}: dwfrm_billing_creditCardFields_expirationMonth`
@@ -261,7 +298,7 @@ const url =
       );
 
       selectedOption.selected = true;
-    }, ck.CC_EXP_YR);
+    }, process.env.CC_EXP_YR);
 
     log.debug(`step ${count++}: dwfrm_billing_creditCardFields_expirationYear`);
 
@@ -281,9 +318,12 @@ const url =
 
     log.debug(`step ${count++}: #order-review-agreement`);
 
-    if (parseBoolean(ck.BUY, false) === false) {
+    if (parseBoolean(process.env.BUY, false) === false) {
       // send an email
-      log.info("BUY is false...closing");
+      log.info("BUY is FALSE!! canceling order");
+
+      // send an email
+      sendEmail("bike-bot CANCELLED!", "BUY is FALSE ;)");
       return;
     }
 
@@ -301,10 +341,72 @@ const url =
     log.info(
       "Reached the end of the flow!! Hopefully my purchase went well ;)"
     );
-  } catch (error) {
+
+    PURCHASE_MADE = true;
+
     // send an email
+    sendEmail(
+      "bike-bot PURCHASED!",
+      "Congrats on your new bike, Christopher ;)"
+    );
+  } catch (error) {
+    FATAL_ERROR_COUNT++;
+
+    // send an email
+    sendEmail("bike-bot ERROR", error);
+
     log.error(error);
   } finally {
+    ACTIVELY_RUNNING = false;
     await browser.close();
   }
+}
+
+// Main flow
+(async () => {
+  log.info("starting mainFlow");
+  const intervalTime = parseBoolean(process.env.DEBUG, false)
+    ? parseInt(process.env.DEBUG_INTERVAL_TIME, 10)
+    : parseInt(process.env.INTERVAL_TIME, 10);
+  const timerId = setInterval(async () => {
+    // check if the flow is already running
+    if (ACTIVELY_RUNNING) {
+      log.debug("actively running already!");
+      return;
+    }
+
+    // check if already purchased or error, and disable
+    const configExpirationDate = parseISO(process.env.EXPIRATION_DATE);
+    const dateCompare = compareAsc(Date.now(), configExpirationDate);
+    if (
+      PURCHASE_MADE ||
+      FATAL_ERROR_COUNT > parseInt(process.env.FATAL_ERROR_THRESHOLD, 10) ||
+      dateCompare > 0
+    ) {
+      log.info(
+        `disabling interval -- PURCHASE_MADE: ${PURCHASE_MADE} -- dateCompare: ${dateCompare} -- FATAL_ERROR_COUNT: ${FATAL_ERROR_COUNT} -- configExpirationDate: ${configExpirationDate}`
+      );
+      clearInterval(timerId);
+
+      // send an email
+      sendEmail(
+        "bike-bot DISABLED!",
+        `Hopefully for a good reason ;) PURCHASE_MADE: ${PURCHASE_MADE} -- dateCompare: ${dateCompare} -- FATAL_ERROR_COUNT: ${FATAL_ERROR_COUNT} -- configExpirationDate: ${configExpirationDate}`
+      );
+      return;
+    }
+    log.debug("calling mainFlow");
+    log.debug(
+      `PURCHASE_MADE: ${PURCHASE_MADE} -- dateCompare: ${dateCompare} -- FATAL_ERROR_COUNT: ${FATAL_ERROR_COUNT} -- configExpirationDate: ${configExpirationDate}`
+    );
+
+    if (parseBoolean(process.env.DEBUG, false)) {
+      sendEmail(
+        "bike-bot DEBUG!",
+        `Hopefully for a good reason ;) PURCHASE_MADE: ${PURCHASE_MADE} -- dateCompare: ${dateCompare} -- FATAL_ERROR_COUNT: ${FATAL_ERROR_COUNT} -- configExpirationDate: ${configExpirationDate}`
+      );
+    }
+
+    await mainFlow();
+  }, intervalTime);
 })();
