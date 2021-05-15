@@ -58,9 +58,10 @@ const sendEmail = (subject, text) => {
 async function mainFlow() {
   ACTIVELY_RUNNING = true;
   let count = 0;
+  let browser;
 
   try {
-    const browser = await puppeteer.launch({
+    browser = await puppeteer.launch({
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
 
@@ -343,7 +344,7 @@ async function mainFlow() {
     log.error(error);
   } finally {
     ACTIVELY_RUNNING = false;
-    await browser.close();
+    browser && (await browser.close());
   }
 }
 
