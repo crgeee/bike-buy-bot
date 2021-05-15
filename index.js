@@ -19,6 +19,7 @@ puppeteer.use(pluginStealth());
 let PURCHASE_MADE = false;
 let FATAL_ERROR_COUNT = 0;
 let ACTIVELY_RUNNING = false;
+let ACTIVELY_RUNNING_COUNT = 0;
 
 // Logging
 let log;
@@ -56,12 +57,13 @@ const sendEmail = (subject, text) => {
 
 async function mainFlow() {
   ACTIVELY_RUNNING = true;
-  const browser = await puppeteer.launch({
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
   let count = 0;
 
   try {
+    const browser = await puppeteer.launch({
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
     const page = await browser.newPage();
 
     if (parseBoolean(process.env.DEBUG, false) == true) {
@@ -358,7 +360,7 @@ async function initLogging() {
 (async () => {
   await initLogging();
 
-  log.info("starting mainFlow");
+  log.info("starting interval...");
 
   const intervalTime = parseBoolean(process.env.DEBUG, false)
     ? parseInt(process.env.DEBUG_INTERVAL_TIME, 10)
@@ -366,7 +368,19 @@ async function initLogging() {
   const timerId = setInterval(async () => {
     // check if the flow is already running
     if (ACTIVELY_RUNNING) {
-      log.debug("actively running already!");
+      ACTIVELY_RUNNING_COUNT++;
+      log.debug(
+        `actively running already! ACTIVELY_RUNNING_COUNT: ${ACTIVELY_RUNNING_COUNT}`
+      );
+
+      // if threshold hit, send an email
+      if (ACTIVELY_RUNNING_COUNT > process.env.ACTIVELY_RUNNING_THRESHOLD) {
+        sendEmail(
+          "bike-bot ACTIVELY_RUNNING_COUNT threshold",
+          `ACTIVELY_RUNNING_COUNT: ${ACTIVELY_RUNNING_COUNT}, THRESHOLD: ${process.env.ACTIVELY_RUNNING_THRESHOLD}. That's no bueno..... PURCHASE_MADE: ${PURCHASE_MADE} -- dateCompare: ${dateCompare} -- FATAL_ERROR_COUNT: ${FATAL_ERROR_COUNT} -- configExpirationDate: ${configExpirationDate}`
+        );
+        log.warn(`ACTIVELY_RUNNING_COUNT threshold hit`);
+      }
       return;
     }
 
@@ -390,7 +404,8 @@ async function initLogging() {
       );
       return;
     }
-    log.debug("calling mainFlow");
+    log.info("running mainFlow()");
+    ACTIVELY_RUNNING_COUNT = 0;
     log.debug(
       `PURCHASE_MADE: ${PURCHASE_MADE} -- dateCompare: ${dateCompare} -- FATAL_ERROR_COUNT: ${FATAL_ERROR_COUNT} -- configExpirationDate: ${configExpirationDate}`
     );
